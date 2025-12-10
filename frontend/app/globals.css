@@ -1,0 +1,108 @@
+@import "tailwindcss";
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+/* 破碎动画样式 */
+@keyframes shatter {
+  0% {
+    opacity: 1;
+    transform: scale(1) rotate(0deg) translateY(0);
+    filter: blur(0px);
+  }
+  40% {
+    opacity: 0.8;
+    filter: blur(2px);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.3) rotate(15deg) translateY(20px);
+    filter: blur(8px);
+  }
+}
+
+@keyframes fragmentLeft {
+  0% {
+    opacity: 1;
+    transform: translate(0, 0) rotate(0deg);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-30px, -40px) rotate(-25deg);
+  }
+}
+
+@keyframes fragmentRight {
+  0% {
+    opacity: 1;
+    transform: translate(0, 0) rotate(0deg);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(30px, -40px) rotate(25deg);
+  }
+}
+
+@keyframes fragmentBottom {
+  0% {
+    opacity: 1;
+    transform: translate(0, 0) rotate(0deg);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(0, 40px) rotate(10deg);
+  }
+}
+
+.history-item-deleting {
+  animation: shatter 0.6s cubic-bezier(0.36, 0, 0.66, -0.56) forwards;
+  position: relative;
+  overflow: hidden;
+}
+
+/* 破碎碎片效果 */
+.history-item-deleting::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 40%;
+  height: 100%;
+  background: inherit;
+  border-radius: inherit;
+  animation: fragmentLeft 0.6s cubic-bezier(0.36, 0, 0.66, -0.56) forwards;
+}
+
+.history-item-deleting::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 40%;
+  height: 100%;
+  background: inherit;
+  border-radius: inherit;
+  animation: fragmentRight 0.6s cubic-bezier(0.36, 0, 0.66, -0.56) forwards;
+}
