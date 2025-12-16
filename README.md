@@ -61,7 +61,7 @@ nexus-ai/
 
 3. 启动服务
    ```bash
-   python main.py
+   uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
    ```
    服务将在 http://localhost:8000 启动
 
