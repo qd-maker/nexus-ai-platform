@@ -1,6 +1,11 @@
 "use client"; // 👈 必须加这一行，因为我们要用 useState/useEffect (客户端交互)
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import supabase from "@/lib/supabaseClient";
+
+// 控制台调试开关：在 .env.local 中设置 NEXT_PUBLIC_DEBUG=true 可开启控制台错误输出
+const DEBUG = process.env.NEXT_PUBLIC_DEBUG === 'true';
 
 // 定义后端返回的数据结构 (和 Python 里的 Schema 对应)
 interface AgentResult {
@@ -32,6 +37,7 @@ interface DeleteConfirmState {
 }
 
 export default function Home() {
+  const router = useRouter();
   const [topic, setTopic] = useState("");
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<WorkflowResponse | null>(null); // 当前展示的报告
@@ -43,6 +49,19 @@ export default function Home() {
     topic: null,
   }); // 删除确认对话框状态
   const [deletingId, setDeletingId] = useState<string | null>(null); // 正在删除的项目ID（用于破碎动画）
+  const [session, setSession] = useState<import("@supabase/supabase-js").Session | null>(null);
+  const [authChecking, setAuthChecking] = useState(true);
+
+  const signOut = async () => {
+    try {
+      await supabase.auth.signOut();
+    } finally {
+      setSession(null);
+      setData(null);
+      setHistory([]);
+      router.push('/login');
+    }
+  };
 
   // 为渲染层准备一个安全的 results 数组（兼容历史记录多种存储形态）
   const safeResults: any[] = Array.isArray(data?.results)
@@ -51,14 +70,68 @@ export default function Home() {
         ? (data as any).results.results
         : []);
 
-  // 页面加载时拉取历史
+  // 在关闭 DEBUG 时，抑制控制台的 error/warn，避免 Next.js 开发模式左下角错误提示干扰
   useEffect(() => {
-    fetchHistory();
+    if (!DEBUG) {
+      const originalError = console.error;
+      const originalWarn = console.warn;
+      // @ts-ignore
+      console.error = (..._args: any[]) => {};
+      // @ts-ignore
+      console.warn = (..._args: any[]) => {};
+      return () => {
+        console.error = originalError;
+        console.warn = originalWarn;
+      };
+    }
+  }, []);
+
+  // 当获得 session 后，拉取历史
+  useEffect(() => {
+    if (session?.access_token) {
+      fetchHistory();
+    }
+  }, [session]);
+
+  // 路由保护：检查是否已登录
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      const { data } = await supabase.auth.getSession();
+      const s = data.session ?? null;
+      if (!s) {
+        setAuthChecking(false);
+        router.push('/login');
+        return;
+      }
+      if (mounted) {
+        setSession(s);
+        setAuthChecking(false);
+      }
+    })();
+
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, sess) => {
+      if (!sess) {
+        router.push('/login');
+      } else {
+        setSession(sess);
+      }
+    });
+
+    return () => {
+      mounted = false;
+      sub?.subscription?.unsubscribe?.();
+    };
   }, []);
 
   const fetchHistory = async () => {
+    if (!session?.access_token) return;
     try {
-      const res = await fetch("http://127.0.0.1:8000/api/history");
+      const res = await fetch("http://127.0.0.1:8000/api/history", {
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+      });
       if (!res.ok) {
         throw new Error(`获取历史失败: ${res.status}`);
       }
@@ -91,6 +164,10 @@ export default function Home() {
   // 执行删除操作
   const confirmDelete = async () => {
     if (!deleteConfirm.workflowId) return;
+    if (!session?.access_token) {
+      router.push('/login');
+      return;
+    }
 
     const workflowId = deleteConfirm.workflowId;
     
@@ -107,6 +184,9 @@ export default function Home() {
           `http://127.0.0.1:8000/api/workflow/${workflowId}`,
           {
             method: "DELETE",
+            headers: {
+              Authorization: `Bearer ${session.access_token}`,
+            },
           }
         );
 
@@ -134,13 +214,20 @@ export default function Home() {
   // 核心逻辑：调用 FastAPI
   const startWorkflow = async () => {
     if (!topic) return;
+    if (!session?.access_token) {
+      router.push('/login');
+      return;
+    }
     setLoading(true);
     setData(null); // 清空旧数据
 
     try {
       const res = await fetch("http://127.0.0.1:8000/api/workflow", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
         body: JSON.stringify({
           topic: topic,
         }),
@@ -186,6 +273,17 @@ export default function Home() {
     setData(historyAsResponse);
   };
 
+  if (authChecking) {
+    return (
+      <main className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="flex items-center gap-3 text-gray-600">
+          <div className="h-6 w-6 rounded-full border-4 border-blue-600 border-t-transparent animate-spin" aria-hidden="true" />
+          正在验证登录状态...
+        </div>
+      </main>
+    );
+  }
+
   return (
     <main className="min-h-screen bg-gray-50 flex" aria-busy={loading}>
       {/* 加载中全屏遮罩 + Spinner（不可手动关闭） */}
@@ -204,13 +302,32 @@ export default function Home() {
       {!sidebarOpen && (
         <button
           aria-label="打开侧边栏"
-          onClick={() => setSidebarOpen(true)}
-          className="fixed top-4 left-4 z-40 bg-white border rounded-full p-2 shadow hover:bg-gray-50 cursor-pointer"
+          onClick={() => { if (!loading) setSidebarOpen(true); }}
+          disabled={loading}
+          aria-disabled={loading}
+          className="fixed top-4 left-4 z-40 bg-white border rounded-full p-2 shadow hover:bg-gray-50 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+          title={loading ? '任务进行中，暂不可展开侧边栏' : '打开侧边栏'}
         >
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" className="w-5 h-5">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16" />
           </svg>
         </button>
+      )}
+
+      {/* 右上角：用户邮箱 + 登出按钮 */}
+      {session && (
+        <div className="fixed top-4 right-4 z-40 flex items-center gap-3">
+          <span className="text-sm text-gray-700 bg-white border rounded-full px-3 py-1 shadow" title={session.user?.email || undefined}>
+            {session.user?.email || '已登录'}
+          </span>
+          <button
+            onClick={signOut}
+            className="bg-white border rounded-full px-4 py-2 shadow hover:bg-gray-50 text-gray-700"
+            title="登出"
+          >
+            退出登录
+          </button>
+        </div>
       )}
 
       {/* 👈 左侧：侧边栏（可开合） */}
@@ -219,9 +336,11 @@ export default function Home() {
           <h2 className="font-bold text-gray-700">📜 历史记录</h2>
           <button
             aria-label="关闭侧边栏"
-            onClick={() => setSidebarOpen(false)}
-            className="p-2 rounded hover:bg-gray-100 text-gray-600 cursor-pointer"
-            title="关闭侧边栏"
+            onClick={() => { if (!loading) setSidebarOpen(false); }}
+            disabled={loading}
+            aria-disabled={loading}
+            className="p-2 rounded hover:bg-gray-100 text-gray-600 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            title={loading ? '任务进行中，暂不可关闭侧边栏' : '关闭侧边栏'}
           >
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" className="w-5 h-5">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7" />
@@ -281,7 +400,8 @@ export default function Home() {
         <div
           className="fixed inset-0 z-30"
           aria-hidden="true"
-          onClick={() => setSidebarOpen(false)}
+          onClick={() => { if (!loading) setSidebarOpen(false); }}
+          title={loading ? '任务进行中，暂不可关闭侧边栏' : undefined}
         />
       )}
 
